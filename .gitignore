@@ -14,11 +14,8 @@
 # limitations under the License.
 
 *~
-.classpath
 .externalToolBuilders
 .launches/
-.project
-.settings
 .svn
 build/
 build.properties
