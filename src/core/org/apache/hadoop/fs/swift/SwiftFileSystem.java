@@ -3,13 +3,19 @@ package org.apache.hadoop.fs.swift;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.net.URI;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.SimpleTimeZone;
 
+import org.apache.commons.httpclient.methods.RequestEntity;
+import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.BufferedFSInputStream;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -19,6 +25,8 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.util.Progressable;
+import org.apache.http.Header;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpException;
 
 import com.rackspacecloud.client.cloudfiles.FilesAuthorizationException;
@@ -77,7 +85,7 @@ public class SwiftFileSystem extends FileSystem {
 		}
 
 		public synchronized int read(byte[] b, int off, int len)
-		throws IOException {
+				throws IOException {
 
 			int result = in.read(b, off, len);
 			if (result > 0) {
@@ -90,11 +98,80 @@ public class SwiftFileSystem extends FileSystem {
 			in.close();
 		}
 	}
-	
+
+	private class SwiftFsOutputStream extends OutputStream {
+
+		private PipedOutputStream toPipe;
+		private PipedInputStream fromPipe;
+		private SwiftProgress callback;
+		private long pos = 0;
+
+		public SwiftFsOutputStream(final FilesClient client, final String container,
+				final String objName, int bufferSize, Progressable progress) throws IOException {
+			this.toPipe = new PipedOutputStream();
+			this.fromPipe = new PipedInputStream(toPipe, bufferSize);
+			this.callback = new SwiftProgress(progress);
+
+			new Thread() {
+				public void run(){
+					try {
+						client.storeStreamedObject(container, fromPipe, "binary/octet-stream", objName, new HashMap<String, String>());
+					} catch (Exception e) {
+						e.printStackTrace();
+					} 
+				}
+			}.start();
+
+		}
+
+		@Override
+		public synchronized void write(int b) throws IOException {
+			toPipe.write(b);
+			pos++;
+			callback.progress(pos);
+		}
+
+		@Override
+		public synchronized void write(byte[] b) throws IOException {
+			toPipe.write(b);
+			pos += b.length;
+			callback.progress(pos);
+		}
+
+		@Override
+		public synchronized void write(byte[] b, int off, int len) {
+			try {
+				toPipe.write(b, off, len);
+				pos += len;
+				callback.progress(pos);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+		@Override
+		public synchronized void flush() {
+			try {
+				toPipe.flush();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+		@Override
+		public synchronized void close() {
+			try {
+				toPipe.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+
 	FilesClient client;
 	private Path workingDir;
 	private URI uri;
-	
+
 	@Override
 	public FSDataOutputStream append(Path f, int bufferSize,
 			Progressable progress) throws IOException {
@@ -105,8 +182,15 @@ public class SwiftFileSystem extends FileSystem {
 	public FSDataOutputStream create(Path f, FsPermission permission,
 			boolean overwrite, int bufferSize, short replication,
 			long blockSize, Progressable progress) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		if (exists(f) && !overwrite) {
+			throw new IOException("File already exists:"+f);
+		}
+		Path absolutePath = makeAbsolute(f);
+
+		return new FSDataOutputStream(
+				new SwiftFsOutputStream(client, absolutePath.toUri().getHost(), 
+						absolutePath.toUri().getPath(), bufferSize, progress), 
+						statistics);
 	}
 
 	@Override
@@ -119,6 +203,13 @@ public class SwiftFileSystem extends FileSystem {
 	public boolean delete(Path f, boolean recursive) throws IOException {
 		// TODO Auto-generated method stub
 		return false;
+	}
+
+	@Override
+	public BlockLocation[] getFileBlockLocations(FileStatus file, 
+			long start, long len) throws IOException {
+		// TODO Auto-generated method stub
+		return null;
 	}
 
 	@Override
@@ -144,7 +235,7 @@ public class SwiftFileSystem extends FileSystem {
 		}
 
 		throw new FileNotFoundException(absolutePath +
-		": No such file or directory.");
+				": No such file or directory.");
 	}
 
 	private Path makeAbsolute(Path path) {
@@ -154,21 +245,21 @@ public class SwiftFileSystem extends FileSystem {
 		return new Path(workingDir, path);
 	}
 
-//	private static String pathToKey(Path path) {
-//		if (!path.isAbsolute()) {
-//			throw new IllegalArgumentException("Path must be absolute: " + path);
-//		}
-//		URI uri = path.toUri();
-//		return uri.getHost() + "/" + uri.getPath();
-//	}
+	//	private static String pathToKey(Path path) {
+	//		if (!path.isAbsolute()) {
+	//			throw new IllegalArgumentException("Path must be absolute: " + path);
+	//		}
+	//		URI uri = path.toUri();
+	//		return uri.getHost() + "/" + uri.getPath();
+	//	}
 
-//	private String getContainer(String key) {
-//		int slashLocation = key.indexOf('/');
-//		if (slashLocation == -1) {
-//			return key;
-//		}
-//		return key.substring(slashLocation + 1);
-//	}
+	//	private String getContainer(String key) {
+	//		int slashLocation = key.indexOf('/');
+	//		if (slashLocation == -1) {
+	//			return key;
+	//		}
+	//		return key.substring(slashLocation + 1);
+	//	}
 
 	private FileStatus newFile(FilesObjectMetaData meta, Path path) {
 		try {
@@ -187,14 +278,14 @@ public class SwiftFileSystem extends FileSystem {
 				path.makeQualified(this));
 	}
 
-//	private String getObject(String key) {
-//		int slashLocation = key.indexOf('/');
-//		if (slashLocation == -1) {
-//			return null;
-//		}
-//		return key.substring(0, slashLocation);
-//	}
-	
+	//	private String getObject(String key) {
+	//		int slashLocation = key.indexOf('/');
+	//		if (slashLocation == -1) {
+	//			return null;
+	//		}
+	//		return key.substring(0, slashLocation);
+	//	}
+
 	@Override
 	public URI getUri() {
 		return uri;
@@ -214,7 +305,8 @@ public class SwiftFileSystem extends FileSystem {
 	@Override
 	public boolean mkdirs(Path f, FsPermission permission) throws IOException {
 		try {
-			client.createFullPath(f.toUri().getHost(), f.toUri().getPath());
+			Path absolutePath = makeAbsolute(f);
+			client.createFullPath(absolutePath.toUri().getHost(), absolutePath.toUri().getPath());
 		} catch (FilesException e) {
 			e.printStackTrace();
 		} catch (HttpException e) {
@@ -256,13 +348,13 @@ public class SwiftFileSystem extends FileSystem {
 	public void setWorkingDirectory(Path newDir) {
 		this.workingDir = newDir;
 	}
-	
+
 	public static Date parseRfc822Date(String dateString) throws ParseException {
-        synchronized (rfc822DateParser) {
-            return rfc822DateParser.parse(dateString);
-        }
-    }
-	
+		synchronized (rfc822DateParser) {
+			return rfc822DateParser.parse(dateString);
+		}
+	}
+
 	protected static final SimpleDateFormat rfc822DateParser = new SimpleDateFormat(
 			"EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
 

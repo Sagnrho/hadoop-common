@@ -71,8 +71,8 @@
 	<classpathentry kind="lib" path="src/test/lib/mina-core-2.0.0-M2-20080407.124109-12.jar"/>
 	<classpathentry kind="lib" path="conf"/>
 	<classpathentry kind="lib" path="build/eclipse/test-resources"/>
-	<classpathentry kind="src" path="/java-cloudfiles"/>
 	<classpathentry kind="lib" path="/java-cloudfiles/lib/httpcore-4.1.jar"/>
 	<classpathentry kind="lib" path="/usr/lib/jvm/java-6-sun/lib/tools.jar"/>
+	<classpathentry kind="lib" path="/home/kit/java-cloudfiles/dist/java-cloudfiles.jar" sourcepath="/java-cloudfiles"/>
 	<classpathentry kind="output" path="build/eclipse/classes-main"/>
 </classpath>
