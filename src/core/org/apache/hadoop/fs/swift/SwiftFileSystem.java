@@ -9,8 +9,10 @@ import java.io.PipedOutputStream;
 import java.net.URI;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.SimpleTimeZone;
 
@@ -31,9 +33,11 @@ import org.apache.http.HttpException;
 
 import com.rackspacecloud.client.cloudfiles.FilesAuthorizationException;
 import com.rackspacecloud.client.cloudfiles.FilesClient;
+import com.rackspacecloud.client.cloudfiles.FilesContainer;
 import com.rackspacecloud.client.cloudfiles.FilesException;
 import com.rackspacecloud.client.cloudfiles.FilesInvalidNameException;
 import com.rackspacecloud.client.cloudfiles.FilesNotFoundException;
+import com.rackspacecloud.client.cloudfiles.FilesObject;
 import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
 
 public class SwiftFileSystem extends FileSystem {
@@ -205,7 +209,35 @@ public class SwiftFileSystem extends FileSystem {
 
 	@Override
 	public boolean delete(Path f, boolean recursive) throws IOException {
-		// TODO Auto-generated method stub
+		FileStatus status;
+		try {
+			status = getFileStatus(f);
+		} catch (FileNotFoundException e) {
+			return false;
+		}
+		Path absolutePath = makeAbsolute(f);
+		if (status.isDir()) {
+			FileStatus[] contents = listStatus(f);
+			if (!recursive && contents.length > 0) {
+				throw new IOException("delete: " + f + ": Directory is not empty");
+			}
+			for (FileStatus p : contents) {
+				return delete(p.getPath(), recursive);
+			}
+		}
+		try {
+			if (isContainer(absolutePath)) {
+				return client.deleteContainer(absolutePath.toUri().getHost());
+			}
+			client.deleteObject(absolutePath.toUri().getHost(), absolutePath.toUri().getPath());
+			return true;
+		} catch (FilesNotFoundException e) {
+			e.printStackTrace();
+		} catch (FilesException e) {
+			e.printStackTrace();
+		} catch (HttpException e) {
+			e.printStackTrace();
+		}
 		return false;
 	}
 
@@ -254,22 +286,6 @@ public class SwiftFileSystem extends FileSystem {
 		return new Path(workingDir, path);
 	}
 
-	//	private static String pathToKey(Path path) {
-	//		if (!path.isAbsolute()) {
-	//			throw new IllegalArgumentException("Path must be absolute: " + path);
-	//		}
-	//		URI uri = path.toUri();
-	//		return uri.getHost() + "/" + uri.getPath();
-	//	}
-
-	//	private String getContainer(String key) {
-	//		int slashLocation = key.indexOf('/');
-	//		if (slashLocation == -1) {
-	//			return key;
-	//		}
-	//		return key.substring(slashLocation + 1);
-	//	}
-
 	private FileStatus newFile(FilesObjectMetaData meta, Path path) {
 		try {
 			Date parsedDate = parseRfc822Date(meta.getLastModified());
@@ -299,8 +315,40 @@ public class SwiftFileSystem extends FileSystem {
 
 	@Override
 	public FileStatus[] listStatus(Path f) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
+		FileStatus stat = getFileStatus(f);
+		if (stat != null && ! stat.isDir()) {
+			return new FileStatus[] { stat }; 
+		}
+		Path absolutePath = makeAbsolute(f);
+		String container = absolutePath.toUri().getHost();
+		try {
+			List<FileStatus> statList = new ArrayList<FileStatus>();
+			if (container.length() == 0) { // we are listing root dir
+				List<FilesContainer> containerList = client.listContainers();
+				for (FilesContainer cont : containerList) {
+					statList.add(newDirectory(new Path(cont.getName())));
+				}
+				return statList.toArray(new FileStatus[0]);
+			}
+			String objName = absolutePath.toUri().getPath();
+			List<FilesObject> objList = client.listObjectsStartingWith(container, objName, null, -1, null, new Character('/'));
+			for (FilesObject cont : objList) {
+				statList.add(newDirectory(new Path(cont.getName())));
+			}
+			if (stat == null && statList.size() == 0) {
+				throw new FileNotFoundException("list: "+ absolutePath +
+						": No such file or directory");
+			}
+			return statList.toArray(new FileStatus[0]);
+		} catch (FilesAuthorizationException e) {
+			e.printStackTrace();
+		} catch (FilesException e) {
+			e.printStackTrace();
+		} catch (HttpException e) {
+			e.printStackTrace();
+		}
+		throw new FileNotFoundException("list: "+ absolutePath +
+				": No such file or directory");
 	}
 
 	@Override
@@ -359,8 +407,8 @@ public class SwiftFileSystem extends FileSystem {
 
 	@Override
 	public boolean rename(Path src, Path dst) throws IOException {
-		Path srcAbsolute = makeAbsolute(src);
-		Path dstAbsolute = makeAbsolute(dst);
+		//Path srcAbsolute = makeAbsolute(src);
+		//Path dstAbsolute = makeAbsolute(dst);
 		// TODO Auto-generated method stub
 		return false;
 	}
