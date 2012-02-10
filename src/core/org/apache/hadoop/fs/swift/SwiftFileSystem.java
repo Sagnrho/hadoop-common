@@ -16,8 +16,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.SimpleTimeZone;
 
-import org.apache.commons.httpclient.methods.RequestEntity;
-import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.BufferedFSInputStream;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -27,8 +25,6 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.util.Progressable;
-import org.apache.http.Header;
-import org.apache.http.HttpEntity;
 import org.apache.http.HttpException;
 
 import com.rackspacecloud.client.cloudfiles.FilesAuthorizationException;
@@ -186,18 +182,18 @@ public class SwiftFileSystem extends FileSystem {
 	public FSDataOutputStream create(Path f, FsPermission permission,
 			boolean overwrite, int bufferSize, short replication,
 			long blockSize, Progressable progress) throws IOException {
-		Path absolutePath = makeAbsolute(f);
+		SwiftPath absolutePath = makeAbsolute(f);
 		if (exists(f) && !overwrite) {
 			throw new IOException("create: "+ absolutePath +": File already exists");
 		}
 
-		if (isContainer(absolutePath) || getFileStatus(f).isDir()) {
+		if (absolutePath.isContainer() || getFileStatus(f).isDir()) {
 			throw new IOException("create: "+ absolutePath +": Is a directory");
 		}
 		
 		return new FSDataOutputStream(
-				new SwiftFsOutputStream(client, absolutePath.toUri().getHost(), 
-						absolutePath.toUri().getPath(), bufferSize, progress), 
+				new SwiftFsOutputStream(client, absolutePath.getContainer(), 
+						absolutePath.getObject(), bufferSize, progress), 
 						statistics);
 	}
 
@@ -215,7 +211,7 @@ public class SwiftFileSystem extends FileSystem {
 		} catch (FileNotFoundException e) {
 			return false;
 		}
-		Path absolutePath = makeAbsolute(f);
+		SwiftPath absolutePath = makeAbsolute(f);
 		if (status.isDir()) {
 			FileStatus[] contents = listStatus(f);
 			if (!recursive && contents.length > 0) {
@@ -226,10 +222,10 @@ public class SwiftFileSystem extends FileSystem {
 			}
 		}
 		try {
-			if (isContainer(absolutePath)) {
-				return client.deleteContainer(absolutePath.toUri().getHost());
+			if (absolutePath.isContainer()) {
+				return client.deleteContainer(absolutePath.getContainer());
 			}
-			client.deleteObject(absolutePath.toUri().getHost(), absolutePath.toUri().getPath());
+			client.deleteObject(absolutePath.getContainer(), absolutePath.getObject());
 			return true;
 		} catch (FilesNotFoundException e) {
 			e.printStackTrace();
@@ -242,27 +238,19 @@ public class SwiftFileSystem extends FileSystem {
 	}
 
 	@Override
-	public BlockLocation[] getFileBlockLocations(FileStatus file, 
-			long start, long len) throws IOException {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-	@Override
 	public FileStatus getFileStatus(Path f) throws IOException {
-		Path absolutePath = makeAbsolute(f);
-		//String key = pathToKey(absolutePath);
+		SwiftPath absolutePath = makeAbsolute(f);
 
-		String container = absolutePath.toUri().getHost();
+		String container = absolutePath.getContainer();
 		if (container.length() == 0) { // root always exists
 			return newDirectory(absolutePath);
 		}
 
-		if (isContainer(absolutePath)) { // container is a "directory"
+		if (absolutePath.isContainer()) { // container is a "directory"
 			return newDirectory(absolutePath);
 		}
 		
-		String objName = absolutePath.toUri().getPath();
+		String objName = absolutePath.getObject();
 		
 		try {
 			FilesObjectMetaData meta = client.getObjectMetaData(container, objName);
@@ -279,11 +267,11 @@ public class SwiftFileSystem extends FileSystem {
 				": No such file or directory");
 	}
 
-	private Path makeAbsolute(Path path) {
+	private SwiftPath makeAbsolute(Path path) {
 		if (path.isAbsolute()) {
-			return path;
+			return new SwiftPath(path.toUri());
 		}
-		return new Path(workingDir, path);
+		return new SwiftPath((new Path(workingDir, path)).toUri());
 	}
 
 	private FileStatus newFile(FilesObjectMetaData meta, Path path) {
@@ -319,8 +307,8 @@ public class SwiftFileSystem extends FileSystem {
 		if (stat != null && ! stat.isDir()) {
 			return new FileStatus[] { stat }; 
 		}
-		Path absolutePath = makeAbsolute(f);
-		String container = absolutePath.toUri().getHost();
+		SwiftPath absolutePath = makeAbsolute(f);
+		String container = absolutePath.getContainer();
 		try {
 			List<FileStatus> statList = new ArrayList<FileStatus>();
 			if (container.length() == 0) { // we are listing root dir
@@ -330,7 +318,7 @@ public class SwiftFileSystem extends FileSystem {
 				}
 				return statList.toArray(new FileStatus[0]);
 			}
-			String objName = absolutePath.toUri().getPath();
+			String objName = absolutePath.getObject();
 			List<FilesObject> objList = client.listObjectsStartingWith(container, objName, null, -1, null, new Character('/'));
 			for (FilesObject cont : objList) {
 				statList.add(newDirectory(new Path(cont.getName())));
@@ -354,11 +342,11 @@ public class SwiftFileSystem extends FileSystem {
 	@Override
 	public boolean mkdirs(Path f, FsPermission permission) throws IOException {
 		try {
-			Path absolutePath = makeAbsolute(f);
-			if (isContainer(absolutePath)) {
-				client.createContainer(absolutePath.toUri().getHost());
+			SwiftPath absolutePath = makeAbsolute(f);
+			if (absolutePath.isContainer()) {
+				client.createContainer(absolutePath.getContainer());
 			} else {
-				client.createFullPath(absolutePath.toUri().getHost(), absolutePath.toUri().getPath());
+				client.createFullPath(absolutePath.getContainer(), absolutePath.getObject());
 			}
 		} catch (FilesException e) {
 			e.printStackTrace();
@@ -368,14 +356,14 @@ public class SwiftFileSystem extends FileSystem {
 		return true;
 	}
 
-	private boolean isContainer(Path f) {
-		Path absolutePath = makeAbsolute(f);
-		if (absolutePath.toUri().getPath() == null)
-			return true;
-		if (absolutePath.toUri().getPath().length() == 0)
-			return true;
-		return false;
-	}
+//	private boolean isContainer(Path f) {
+//		Path absolutePath = makeAbsolute(f);
+//		if (absolutePath.toUri().getPath() == null)
+//			return true;
+//		if (absolutePath.toUri().getPath().length() == 0)
+//			return true;
+//		return false;
+//	}
 	
 	@Override
 	public FSDataInputStream open(Path f, int bufferSize) throws IOException {
@@ -387,9 +375,9 @@ public class SwiftFileSystem extends FileSystem {
 			throw new IOException("open: "+ f +": Is a directory");
 		}
 		
-		Path absolutePath = makeAbsolute(f);
-		String container = absolutePath.toUri().getHost();
-		String objName = absolutePath.toUri().getPath();
+		SwiftPath absolutePath = makeAbsolute(f);
+		String container = absolutePath.getContainer();
+		String objName = absolutePath.getObject();
 		try {
 			return new FSDataInputStream(new BufferedFSInputStream(
 					new SwiftFsInputStream(client.getObjectAsStream(container, objName), container, objName), bufferSize));
@@ -407,10 +395,73 @@ public class SwiftFileSystem extends FileSystem {
 
 	@Override
 	public boolean rename(Path src, Path dst) throws IOException {
-		//Path srcAbsolute = makeAbsolute(src);
-		//Path dstAbsolute = makeAbsolute(dst);
-		// TODO Auto-generated method stub
+		SwiftPath srcAbsolute = makeAbsolute(src);
+		SwiftPath dstAbsolute = makeAbsolute(dst);
+		if (srcAbsolute.getContainer().length() == 0) {
+			return false; // renaming root
+		}
+		try {
+			if (getFileStatus(dstAbsolute).isDir()) {
+				dstAbsolute = new SwiftPath((new Path (dstAbsolute, srcAbsolute.getName())).toUri());
+			} else {
+				return false; // overwrite existing file
+			}
+		} catch (FileNotFoundException e) {
+			try {
+				if (!getFileStatus(dstAbsolute.getParent()).isDir()) {
+					return false; // parent dst is a file
+				}
+			} catch (FileNotFoundException ex) {
+				return false; // parent dst does not exist
+			}
+		}
+		try {
+			if (getFileStatus(srcAbsolute).isDir()) {
+				if (srcAbsolute.getContainer().length() == 0) {
+					List<FilesContainer> fullList = client.listContainers();
+					for (FilesContainer container : fullList) {
+						List<FilesObject> list = client.listObjects(container.getName());
+						for (FilesObject fobj : list) {
+							client.copyObject(container.getName(), fobj.getName(), 
+									dstAbsolute.getContainer(), dstAbsolute.getObject() + fobj.getName());
+							client.deleteObject(container.getName(), fobj.getName());
+						}
+					}
+				} else {
+					List<FilesObject> list = client.listObjectsStartingWith(srcAbsolute.getContainer(), srcAbsolute.getObject(), 
+						null, -1, null, null);
+					for (FilesObject fobj : list) {
+						client.copyObject(srcAbsolute.getContainer(), fobj.getName(), 
+								dstAbsolute.getContainer(), dstAbsolute.getObject() + fobj.getName());
+						client.deleteObject(srcAbsolute.getContainer(), fobj.getName());
+					}
+				}
+			} else {
+				if (dstAbsolute.getObject() == null)
+					return false; // tried to rename object to container
+				client.copyObject(srcAbsolute.getContainer(), srcAbsolute.getObject(), 
+						dstAbsolute.getContainer(), dstAbsolute.getObject());
+				client.deleteObject(srcAbsolute.getContainer(), srcAbsolute.getObject());
+			}
+			createParent(src);
+			return true;
+		} catch (FileNotFoundException e) {
+			// Source file does not exist;
+			return false;
+		} catch (HttpException e) {
+			e.printStackTrace();
+		}
 		return false;
+	}
+
+	private void createParent(Path path) throws IOException {
+		Path parent = path.getParent();
+		if (parent != null) {
+			SwiftPath absolutePath = makeAbsolute(parent);
+			if (absolutePath.getContainer().length() > 0) {
+				mkdirs(absolutePath);
+			}
+		}
 	}
 
 	@Override
