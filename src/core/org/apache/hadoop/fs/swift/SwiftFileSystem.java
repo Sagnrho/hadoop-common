@@ -14,8 +14,11 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.SimpleTimeZone;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BufferedFSInputStream;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -24,6 +27,10 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.fs.s3.S3Exception;
+import org.apache.hadoop.io.retry.RetryPolicies;
+import org.apache.hadoop.io.retry.RetryPolicy;
+import org.apache.hadoop.io.retry.RetryProxy;
 import org.apache.hadoop.util.Progressable;
 import org.apache.http.HttpException;
 
@@ -168,9 +175,133 @@ public class SwiftFileSystem extends FileSystem {
 		}
 	}
 
-	FilesClient client;
+	private FilesClient client;
 	private Path workingDir;
 	private URI uri;
+
+	@Override
+	public void initialize(URI uri, Configuration conf) throws IOException {
+		super.initialize(uri, conf);
+		if (client == null) {
+			client = createDefaultClient(uri, conf);
+		}
+		setConf(conf);
+		this.uri = URI.create(uri.getScheme() + "://" + uri.getAuthority());
+		this.workingDir =
+				new Path("/user", System.getProperty("user.name")).makeQualified(this);
+	}
+
+	private static FilesClient createDefaultClient(URI uri, Configuration conf) {
+		
+		FilesClient client = createSwiftClient(uri, conf);
+
+		RetryPolicy basePolicy = RetryPolicies.retryUpToMaximumCountWithFixedSleep(
+				conf.getInt("fs.swift.maxRetries", 4),
+				conf.getLong("fs.swift.sleepTimeSeconds", 10), TimeUnit.SECONDS);
+		Map<Class<? extends Exception>, RetryPolicy> exceptionToPolicyMap =
+				new HashMap<Class<? extends Exception>, RetryPolicy>();
+		exceptionToPolicyMap.put(IOException.class, basePolicy);
+		exceptionToPolicyMap.put(S3Exception.class, basePolicy);
+
+		RetryPolicy methodPolicy = RetryPolicies.retryByException(
+				RetryPolicies.TRY_ONCE_THEN_FAIL, exceptionToPolicyMap);
+		Map<String, RetryPolicy> methodNameToPolicyMap =
+				new HashMap<String, RetryPolicy>();
+		methodNameToPolicyMap.put("storeStreamedObject", methodPolicy);
+
+		return (FilesClient)
+				RetryProxy.create(FilesClient.class, client,
+						methodNameToPolicyMap);
+	}
+	
+	private static FilesClient createSwiftClient(URI uri, Configuration conf) {
+		String userName = null;
+		String userSecret = null;
+		String authUrl = null;
+		String account = null;
+		String connectionTimeOut = null;
+
+		if (uri.getHost() == null) {
+			throw new IllegalArgumentException("Invalid hostname in URI " + uri);
+		}
+
+		String userInfo = uri.getUserInfo();
+		if (userInfo != null) {
+			int index = userInfo.indexOf(':');
+			if (index != -1) {
+				userName = userInfo.substring(0, index);
+				userSecret = userInfo.substring(index + 1);
+			} else {
+				userName = userInfo;
+			}
+		}
+
+		String scheme = uri.getScheme();
+		String userNameProperty = String.format("fs.%s.swiftUserName", scheme);
+		String userSecretProperty = String.format("fs.%s.swiftUserPassword", scheme);
+		if (userName == null) {
+			userName = conf.get(userNameProperty);
+		}
+		if (userSecret == null) {
+			userSecret = conf.get(userSecretProperty);
+		}
+		if (userName == null && userSecret == null) {
+			throw new IllegalArgumentException("Swift " +
+					"User Name and Password " +
+					"must be specified as the " +
+					"username or password " +
+					"(respectively) of a " + scheme +
+					" URL, or by setting the " +
+					userNameProperty + " or " +
+					userSecretProperty +
+					" properties (respectively).");
+		} else if (userName == null) {
+			throw new IllegalArgumentException("Swift " +
+					"User Name must be specified " +
+					"as the username of a " + scheme +
+					" URL, or by setting the " +
+					userNameProperty + " property.");
+		} else if (userSecret == null) {
+			throw new IllegalArgumentException("Swift " +
+					"User Password must be " +
+					"specified as the password of a " +
+					scheme + " URL, or by setting the " +
+					userSecretProperty +
+					" property.");       
+		}
+		String authUrlProperty = String.format("fs.%s.swiftAuthUrl", scheme);
+		String accountNameProperty = String.format("fs.%s.swiftAccountName", scheme);
+		if (authUrl == null) {
+			authUrl = conf.get(authUrlProperty);
+		}
+		if (account == null) {
+			account = conf.get(accountNameProperty);
+		}
+		if (authUrl == null) {
+			throw new IllegalArgumentException(
+					"Swift Auth Url must be specified by setting the " +
+							authUrlProperty +
+					" property.");
+		}
+		if (account == null) {
+			throw new IllegalArgumentException(
+					"Swift Account Name must be specified by setting the " +
+							accountNameProperty +
+					" property.");
+		}
+		String timeoutProperty = String.format("fs.%s.swiftTimeout", scheme);
+		if (connectionTimeOut == null) {
+			connectionTimeOut = conf.get(timeoutProperty);
+		}
+		if (connectionTimeOut == null) {
+			throw new IllegalArgumentException(
+					"Swift Connection Timeout (in ms) " +
+					"must be specified by setting the " +
+							timeoutProperty +
+					" property (0 means indefinite timeout).");
+		}
+		return new FilesClient(userName, userSecret, authUrl, account, Integer.parseInt(connectionTimeOut));
+	}
 
 	@Override
 	public FSDataOutputStream append(Path f, int bufferSize,
