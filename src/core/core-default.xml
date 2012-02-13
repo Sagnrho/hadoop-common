@@ -216,6 +216,12 @@
 </property>
 
 <property>
+  <name>fs.swift.impl</name>
+  <value>org.apache.hadoop.fs.swift.SwiftFileSystem</value>
+  <description>The FileSystem for swift: uris.</description>
+</property>
+
+<property>
   <name>fs.checkpoint.dir</name>
   <value>${hadoop.tmp.dir}/dfs/namesecondary</value>
   <description>Determines where on the local filesystem the DFS secondary
