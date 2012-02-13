@@ -310,12 +310,12 @@ public class SwiftFileSystem extends FileSystem {
 							authUrlProperty +
 					" property.");
 		}
-		if (account == null) {
-			throw new IllegalArgumentException(
-					"Swift Account Name must be specified by setting the " +
-							accountNameProperty +
-					" property.");
-		}
+//		if (account == null) {
+//			throw new IllegalArgumentException(
+//					"Swift Account Name must be specified by setting the " +
+//							accountNameProperty +
+//					" property.");
+//		}
 		String timeoutProperty = String.format("fs.%s.swiftTimeout", scheme);
 		if (connectionTimeOut == null) {
 			connectionTimeOut = conf.get(timeoutProperty);
