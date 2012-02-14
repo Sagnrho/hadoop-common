@@ -1,66 +1,40 @@
 package org.apache.hadoop.fs.swift;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.util.HashMap;
 import java.util.List;
 
-import org.apache.http.HttpException;
-
-import com.rackspacecloud.client.cloudfiles.FilesAuthorizationException;
 import com.rackspacecloud.client.cloudfiles.FilesContainer;
-import com.rackspacecloud.client.cloudfiles.FilesContainerNotEmptyException;
-import com.rackspacecloud.client.cloudfiles.FilesException;
-import com.rackspacecloud.client.cloudfiles.FilesInvalidNameException;
-import com.rackspacecloud.client.cloudfiles.FilesNotFoundException;
 import com.rackspacecloud.client.cloudfiles.FilesObject;
 import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
 
 public interface ISwiftFilesClient {
 
-	InputStream getObjectAsStream(String container, String objName, long pos,
-			Object object) throws IOException, HttpException,
-			FilesAuthorizationException, FilesInvalidNameException,
-			FilesNotFoundException;
+	InputStream getObjectAsStream(String container, String objName, long pos);
 
 	void storeStreamedObject(String container, PipedInputStream fromPipe,
-			String string, String objName, HashMap<String, String> hashMap)
-			throws IOException, HttpException, FilesException;
+			String string, String objName, HashMap<String, String> hashMap);
 
-	boolean deleteContainer(String container) throws IOException,
-			HttpException, FilesAuthorizationException,
-			FilesInvalidNameException, FilesNotFoundException,
-			FilesContainerNotEmptyException;
+	boolean deleteContainer(String container);
 
-	void deleteObject(String container, String object) throws IOException,
-			FilesNotFoundException, HttpException, FilesException;
+	boolean deleteObject(String container, String object);
 
-	FilesObjectMetaData getObjectMetaData(String container, String objName)
-			throws IOException, FilesNotFoundException, HttpException,
-			FilesAuthorizationException, FilesInvalidNameException;
+	FilesObjectMetaData getObjectMetaData(String container, String objName);
 
-	List<FilesContainer> listContainers() throws IOException, HttpException,
-			FilesAuthorizationException, FilesException;
+	List<FilesContainer> listContainers();
 
 	List<FilesObject> listObjectsStartingWith(String container, String objName,
-			Object object, int i, Object object2, Character character)
-			throws IOException, FilesException;
+			int i, Character character);
 
-	void createContainer(String container) throws IOException, HttpException,
-			FilesAuthorizationException, FilesException;
+	boolean createContainer(String container);
 
-	void createFullPath(String container, String object) throws HttpException,
-			IOException, FilesException;
+	boolean createFullPath(String container, String object);
 
-	InputStream getObjectAsStream(String container, String objName)
-			throws IOException, HttpException, FilesAuthorizationException,
-			FilesInvalidNameException, FilesNotFoundException;
+	InputStream getObjectAsStream(String container, String objName);
 
-	List<FilesObject> listObjects(String name) throws IOException,
-			FilesAuthorizationException, FilesException;
+	List<FilesObject> listObjects(String name);
 
-	void copyObject(String name, String name2, String container, String string)
-			throws HttpException, IOException;
+	void copyObject(String name, String name2, String container, String string);
 
 }

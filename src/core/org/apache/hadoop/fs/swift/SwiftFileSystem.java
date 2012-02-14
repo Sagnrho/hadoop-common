@@ -97,7 +97,7 @@ public class SwiftFileSystem extends FileSystem {
 		public void seek(long pos) throws IOException {
 			try {
 				in.close();
-				in = client.getObjectAsStream(container, objName, pos, null);
+				in = client.getObjectAsStream(container, objName, pos);
 				this.pos = pos;
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -220,7 +220,7 @@ public class SwiftFileSystem extends FileSystem {
 
 	private static ISwiftFilesClient createDefaultClient(URI uri, Configuration conf) {
 		
-		FilesClient client = createSwiftClient(uri, conf);
+		FilesClientWrapper client = createSwiftClient(uri, conf);
 
 		RetryPolicy basePolicy = RetryPolicies.retryUpToMaximumCountWithFixedSleep(
 				conf.getInt("fs.swift.maxRetries", 4),
@@ -241,7 +241,7 @@ public class SwiftFileSystem extends FileSystem {
 						methodNameToPolicyMap);
 	}
 	
-	private static FilesClient createSwiftClient(URI uri, Configuration conf) {
+	private static FilesClientWrapper createSwiftClient(URI uri, Configuration conf) {
 		String userName = null;
 		String userSecret = null;
 		String authUrl = null;
@@ -327,7 +327,7 @@ public class SwiftFileSystem extends FileSystem {
 							timeoutProperty +
 					" property (0 means indefinite timeout).");
 		}
-		return new FilesClient(userName, userSecret, authUrl, account, Integer.parseInt(connectionTimeOut));
+		return new FilesClientWrapper(new FilesClient(userName, userSecret, authUrl, account, Integer.parseInt(connectionTimeOut)));
 	}
 
 	@Override
@@ -379,20 +379,10 @@ public class SwiftFileSystem extends FileSystem {
 				return delete(p.getPath(), recursive);
 			}
 		}
-		try {
-			if (absolutePath.isContainer()) {
-				return client.deleteContainer(absolutePath.getContainer());
-			}
-			client.deleteObject(absolutePath.getContainer(), absolutePath.getObject());
-			return true;
-		} catch (FilesNotFoundException e) {
-			e.printStackTrace();
-		} catch (FilesException e) {
-			e.printStackTrace();
-		} catch (HttpException e) {
-			e.printStackTrace();
+		if (absolutePath.isContainer()) {
+			return client.deleteContainer(absolutePath.getContainer());
 		}
-		return false;
+		return client.deleteObject(absolutePath.getContainer(), absolutePath.getObject());
 	}
 
 	@Override
@@ -467,51 +457,34 @@ public class SwiftFileSystem extends FileSystem {
 		}
 		SwiftPath absolutePath = makeAbsolute(f);
 		String container = absolutePath.getContainer();
-		try {
-			List<FileStatus> statList = new ArrayList<FileStatus>();
-			if (container.length() == 0) { // we are listing root dir
-				List<FilesContainer> containerList = client.listContainers();
-				for (FilesContainer cont : containerList) {
-					statList.add(newDirectory(new Path(cont.getName())));
-				}
-				return statList.toArray(new FileStatus[0]);
-			}
-			String objName = absolutePath.getObject();
-			List<FilesObject> objList = client.listObjectsStartingWith(container, objName, null, -1, null, new Character('/'));
-			for (FilesObject cont : objList) {
+		List<FileStatus> statList = new ArrayList<FileStatus>();
+		if (container.length() == 0) { // we are listing root dir
+			List<FilesContainer> containerList = client.listContainers();
+			for (FilesContainer cont : containerList) {
 				statList.add(newDirectory(new Path(cont.getName())));
 			}
-			if (stat == null && statList.size() == 0) {
-				throw new FileNotFoundException("list: "+ absolutePath +
-						": No such file or directory");
-			}
 			return statList.toArray(new FileStatus[0]);
-		} catch (FilesAuthorizationException e) {
-			e.printStackTrace();
-		} catch (FilesException e) {
-			e.printStackTrace();
-		} catch (HttpException e) {
-			e.printStackTrace();
 		}
-		throw new FileNotFoundException("list: "+ absolutePath +
-				": No such file or directory");
+		String objName = absolutePath.getObject();
+		List<FilesObject> objList = client.listObjectsStartingWith(container, objName, -1, new Character('/'));
+		for (FilesObject cont : objList) {
+			statList.add(newDirectory(new Path(cont.getName())));
+		}
+		if (stat == null && statList.size() == 0) {
+			throw new FileNotFoundException("list: "+ absolutePath +
+					": No such file or directory");
+		}
+		return statList.toArray(new FileStatus[0]);
 	}
 
 	@Override
 	public boolean mkdirs(Path f, FsPermission permission) throws IOException {
-		try {
-			SwiftPath absolutePath = makeAbsolute(f);
-			if (absolutePath.isContainer()) {
-				client.createContainer(absolutePath.getContainer());
-			} else {
-				client.createFullPath(absolutePath.getContainer(), absolutePath.getObject());
-			}
-		} catch (FilesException e) {
-			e.printStackTrace();
-		} catch (HttpException e) {
-			e.printStackTrace();
+		SwiftPath absolutePath = makeAbsolute(f);
+		if (absolutePath.isContainer()) {
+			return client.createContainer(absolutePath.getContainer());
+		} else {
+			return client.createFullPath(absolutePath.getContainer(), absolutePath.getObject());
 		}
-		return true;
 	}
 
 //	private boolean isContainer(Path f) {
@@ -536,19 +509,8 @@ public class SwiftFileSystem extends FileSystem {
 		SwiftPath absolutePath = makeAbsolute(f);
 		String container = absolutePath.getContainer();
 		String objName = absolutePath.getObject();
-		try {
-			return new FSDataInputStream(new BufferedFSInputStream(
-					new SwiftFsInputStream(client.getObjectAsStream(container, objName), container, objName), bufferSize));
-		} catch (FilesAuthorizationException e) {
-			e.printStackTrace();
-		} catch (FilesInvalidNameException e) {
-			e.printStackTrace();
-		} catch (FilesNotFoundException e) {
-			e.printStackTrace();
-		} catch (HttpException e) {
-			e.printStackTrace();
-		}
-		return null;
+		return new FSDataInputStream(new BufferedFSInputStream(
+				new SwiftFsInputStream(client.getObjectAsStream(container, objName), container, objName), bufferSize));
 	}
 
 	@Override
@@ -586,8 +548,7 @@ public class SwiftFileSystem extends FileSystem {
 						}
 					}
 				} else {
-					List<FilesObject> list = client.listObjectsStartingWith(srcAbsolute.getContainer(), srcAbsolute.getObject(), 
-						null, -1, null, null);
+					List<FilesObject> list = client.listObjectsStartingWith(srcAbsolute.getContainer(), srcAbsolute.getObject(), -1, null);
 					for (FilesObject fobj : list) {
 						client.copyObject(srcAbsolute.getContainer(), fobj.getName(), 
 								dstAbsolute.getContainer(), dstAbsolute.getObject() + fobj.getName());
@@ -606,10 +567,7 @@ public class SwiftFileSystem extends FileSystem {
 		} catch (FileNotFoundException e) {
 			// Source file does not exist;
 			return false;
-		} catch (HttpException e) {
-			e.printStackTrace();
 		}
-		return false;
 	}
 
 	private void createParent(Path path) throws IOException {
