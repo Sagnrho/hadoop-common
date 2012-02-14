@@ -140,7 +140,7 @@ public class SwiftFileSystem extends FileSystem {
 		private SwiftProgress callback;
 		private long pos = 0;
 
-		public SwiftFsOutputStream(final FilesClient client, final String container,
+		public SwiftFsOutputStream(final ISwiftFilesClient client, final String container,
 				final String objName, int bufferSize, Progressable progress) throws IOException {
 			this.toPipe = new PipedOutputStream();
 			this.fromPipe = new PipedInputStream(toPipe, bufferSize);
@@ -202,7 +202,7 @@ public class SwiftFileSystem extends FileSystem {
 		}
 	}
 
-	private FilesClient client;
+	private ISwiftFilesClient client;
 	private Path workingDir;
 	private URI uri;
 
@@ -218,7 +218,7 @@ public class SwiftFileSystem extends FileSystem {
 				new Path("/user", System.getProperty("user.name")).makeQualified(this);
 	}
 
-	private static FilesClient createDefaultClient(URI uri, Configuration conf) {
+	private static ISwiftFilesClient createDefaultClient(URI uri, Configuration conf) {
 		
 		FilesClient client = createSwiftClient(uri, conf);
 
@@ -236,8 +236,8 @@ public class SwiftFileSystem extends FileSystem {
 				new HashMap<String, RetryPolicy>();
 		methodNameToPolicyMap.put("storeStreamedObject", methodPolicy);
 
-		return (FilesClient)
-				RetryProxy.create(FilesClient.class, client,
+		return (ISwiftFilesClient)
+				RetryProxy.create(ISwiftFilesClient.class, client,
 						methodNameToPolicyMap);
 	}
 	
@@ -264,8 +264,8 @@ public class SwiftFileSystem extends FileSystem {
 		}
 
 		String scheme = uri.getScheme();
-		String userNameProperty = String.format("fs.%s.swiftUserName", scheme);
-		String userSecretProperty = String.format("fs.%s.swiftUserPassword", scheme);
+		String userNameProperty = String.format("fs.%s.UserName", scheme);
+		String userSecretProperty = String.format("fs.%s.UserPassword", scheme);
 		if (userName == null) {
 			userName = conf.get(userNameProperty);
 		}
@@ -296,8 +296,8 @@ public class SwiftFileSystem extends FileSystem {
 					userSecretProperty +
 					" property.");       
 		}
-		String authUrlProperty = String.format("fs.%s.swiftAuthUrl", scheme);
-		String accountNameProperty = String.format("fs.%s.swiftAccountName", scheme);
+		String authUrlProperty = String.format("fs.%s.AuthUrl", scheme);
+		String accountNameProperty = String.format("fs.%s.AccountName", scheme);
 		if (authUrl == null) {
 			authUrl = conf.get(authUrlProperty);
 		}
@@ -316,7 +316,7 @@ public class SwiftFileSystem extends FileSystem {
 //							accountNameProperty +
 //					" property.");
 //		}
-		String timeoutProperty = String.format("fs.%s.swiftTimeout", scheme);
+		String timeoutProperty = String.format("fs.%s.Timeout", scheme);
 		if (connectionTimeOut == null) {
 			connectionTimeOut = conf.get(timeoutProperty);
 		}
