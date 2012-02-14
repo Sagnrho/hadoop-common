@@ -37,9 +37,15 @@ public class SwiftPath extends Path {
 
 	public SwiftPath(URI aUri) {
 		super(aUri);
-		this.container = aUri.getHost();
-		if (aUri.getPath() != null)
-			this.objName = aUri.getPath().substring(1);
+		String fullPath = aUri.getPath().substring(1);
+		int firstSlash = fullPath.indexOf('/');
+		if (firstSlash > 0) {
+			this.container = fullPath.substring(0, firstSlash);
+			this.objName = fullPath.substring(firstSlash + 1);
+		} else {
+			this.container = fullPath;
+			this.objName = null;
+		}
 	}
 
 	public String getContainer() {
