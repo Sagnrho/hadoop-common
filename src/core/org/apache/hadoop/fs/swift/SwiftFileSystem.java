@@ -27,13 +27,14 @@ import java.io.PipedOutputStream;
 import java.net.URI;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.SimpleTimeZone;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.conf.Configuration;
@@ -141,6 +142,7 @@ public class SwiftFileSystem extends FileSystem {
 				public void run(){
 					try {
 						client.storeStreamedObject(container, fromPipe, "binary/octet-stream", objName, new HashMap<String, String>());
+						System.out.println("stored object: /"+container+"/"+objName);
 					} catch (Exception e) {
 						e.printStackTrace();
 					} 
@@ -152,6 +154,7 @@ public class SwiftFileSystem extends FileSystem {
 		@Override
 		public synchronized void close() {
 			try {
+				toPipe.flush();
 				toPipe.close();
 			} catch (IOException e) {
 				e.printStackTrace();
@@ -306,14 +309,23 @@ public class SwiftFileSystem extends FileSystem {
 			boolean overwrite, int bufferSize, short replication,
 			long blockSize, Progressable progress) throws IOException {
 		SwiftPath absolutePath = makeAbsolute(f);
-		if (exists(f) && !overwrite) {
-			throw new IOException("create: "+ absolutePath +": File already exists");
+		FileStatus stat = null;
+		try {
+			if ((stat = getFileStatus(absolutePath)) != null) {
+				if (!overwrite)
+					throw new IOException("create: "+ absolutePath +": File already exists");
+				if (stat.isDir())
+					throw new IOException("create: "+ absolutePath +": Is a directory");
+			}
+		} catch (FileNotFoundException e) {
+			// it's ok
 		}
 
-		if (absolutePath.isContainer() || getFileStatus(f).isDir()) {
+		if (absolutePath.isContainer()) {
 			throw new IOException("create: "+ absolutePath +": Is a directory");
 		}
-		
+
+		System.out.println("create: " + absolutePath);
 		return new FSDataOutputStream(
 				new SwiftFsOutputStream(client, absolutePath.getContainer(), 
 						absolutePath.getObject(), bufferSize, progress), 
@@ -425,24 +437,30 @@ public class SwiftFileSystem extends FileSystem {
 
 	@Override
 	public FileStatus[] listStatus(Path f) throws IOException {
-		FileStatus stat = getFileStatus(f);
+		SwiftPath absolutePath = makeAbsolute(f);
+		FileStatus stat = getFileStatus(absolutePath);
 		if (stat != null && ! stat.isDir()) {
 			return new FileStatus[] { stat }; 
 		}
-		SwiftPath absolutePath = makeAbsolute(f);
 		String container = absolutePath.getContainer();
-		List<FileStatus> statList = new ArrayList<FileStatus>();
+		//List<FileStatus> statList = new ArrayList<FileStatus>();
+		Set<FileStatus> statList = new TreeSet<FileStatus>();
 		if (container.length() == 0) { // we are listing root dir
 			List<FilesContainer> containerList = client.listContainers();
 			for (FilesContainer cont : containerList) {
-				statList.add(newDirectory(new Path(cont.getName())));
+				statList.add(getFileStatus(new Path("/" + cont.getName())));
 			}
 			return statList.toArray(new FileStatus[0]);
 		}
 		String objName = absolutePath.getObject();
-		List<FilesObject> objList = client.listObjectsStartingWith(container, objName, -1, new Character('/'));
+		List<FilesObject> objList = client.listObjectsStartingWith(container, 
+				(objName == null) ? null : objName + "/", -1, new Character('/'));
 		for (FilesObject obj : objList) {
-			statList.add(newDirectory(new Path(container, obj.getName())));
+			String name = obj.getName();
+			System.out.println("list: /" + container + "/" + name);
+			if (name.lastIndexOf('/') == name.length() - 1)
+				name = name.substring(0, name.length() - 1);
+			statList.add(getFileStatus(new Path("/" + container, name)));
 		}
 		if (stat == null && statList.size() == 0) {
 			throw new FileNotFoundException("list: "+ absolutePath +

@@ -38,6 +38,7 @@ public class SwiftPath extends Path {
 	public SwiftPath(URI aUri) {
 		super(aUri);
 		String fullPath = aUri.getPath().substring(1);
+		System.out.println("fullPath: " + fullPath);
 		int firstSlash = fullPath.indexOf('/');
 		if (firstSlash > 0) {
 			this.container = fullPath.substring(0, firstSlash);
