@@ -359,7 +359,11 @@ public class SwiftFileSystem extends FileSystem {
 		if (absolutePath.isContainer()) {
 			return client.deleteContainer(absolutePath.getContainer());
 		}
-		return client.deleteObject(absolutePath.getContainer(), absolutePath.getObject());
+		if (client.deleteObject(absolutePath.getContainer(), absolutePath.getObject())) {
+			createParent(absolutePath);
+			return true;
+		}
+		return false;
 	}
 
 	@Override
