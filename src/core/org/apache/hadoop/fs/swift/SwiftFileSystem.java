@@ -483,6 +483,7 @@ public class SwiftFileSystem extends FileSystem {
 		if (absolutePath.isContainer()) {
 			return client.createContainer(absolutePath.getContainer());
 		} else {
+			client.createContainer(absolutePath.getContainer()); // ignore exit value, maybe container exists already
 			return client.createFullPath(absolutePath.getContainer(), absolutePath.getObject());
 		}
 	}
