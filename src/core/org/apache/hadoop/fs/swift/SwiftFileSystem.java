@@ -50,14 +50,9 @@ import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.io.retry.RetryProxy;
 import org.apache.hadoop.util.Progressable;
-import org.apache.http.HttpException;
 
-import com.rackspacecloud.client.cloudfiles.FilesAuthorizationException;
 import com.rackspacecloud.client.cloudfiles.FilesClient;
 import com.rackspacecloud.client.cloudfiles.FilesContainer;
-import com.rackspacecloud.client.cloudfiles.FilesException;
-import com.rackspacecloud.client.cloudfiles.FilesInvalidNameException;
-import com.rackspacecloud.client.cloudfiles.FilesNotFoundException;
 import com.rackspacecloud.client.cloudfiles.FilesObject;
 import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
 
@@ -231,36 +226,13 @@ public class SwiftFileSystem extends FileSystem {
 	}
 
 	private static FilesClientWrapper createSwiftClient(URI uri, Configuration conf) {
-		String userName = null;
-		String userSecret = null;
-		String authUrl = null;
-		String account = null;
-		String connectionTimeOut = null;
-
-		if (uri.getHost() == null) {
-			throw new IllegalArgumentException("Invalid hostname in URI " + uri);
-		}
-
-		String userInfo = uri.getUserInfo();
-		if (userInfo != null) {
-			int index = userInfo.indexOf(':');
-			if (index != -1) {
-				userName = userInfo.substring(0, index);
-				userSecret = userInfo.substring(index + 1);
-			} else {
-				userName = userInfo;
-			}
-		}
 
 		String scheme = uri.getScheme();
-		String userNameProperty = String.format("fs.%s.UserName", scheme);
-		String userSecretProperty = String.format("fs.%s.UserPassword", scheme);
-		if (userName == null) {
-			userName = conf.get(userNameProperty);
-		}
-		if (userSecret == null) {
-			userSecret = conf.get(userSecretProperty);
-		}
+		String userNameProperty = String.format("fs.%s.userName", scheme);
+		String userSecretProperty = String.format("fs.%s.userPassword", scheme);
+		String userName = conf.get(userNameProperty);
+		String userSecret = conf.get(userSecretProperty);
+
 		if (userName == null && userSecret == null) {
 			throw new IllegalArgumentException("Swift " +
 					"User Name and Password " +
@@ -285,30 +257,22 @@ public class SwiftFileSystem extends FileSystem {
 					userSecretProperty +
 					" property.");       
 		}
-		String authUrlProperty = String.format("fs.%s.AuthUrl", scheme);
-		String accountNameProperty = String.format("fs.%s.AccountName", scheme);
-		if (authUrl == null) {
-			authUrl = conf.get(authUrlProperty);
-		}
-		if (account == null) {
-			account = conf.get(accountNameProperty);
-		}
+		
+		String authUrlProperty = String.format("fs.%s.authUrl", scheme);
+		String accountNameProperty = String.format("fs.%s.accountName", scheme);
+		String authUrl = conf.get(authUrlProperty);
+		String account = conf.get(accountNameProperty);
+
 		if (authUrl == null) {
 			throw new IllegalArgumentException(
 					"Swift Auth Url must be specified by setting the " +
 							authUrlProperty +
 					" property.");
 		}
-//		if (account == null) {
-//			throw new IllegalArgumentException(
-//					"Swift Account Name must be specified by setting the " +
-//							accountNameProperty +
-//					" property.");
-//		}
-		String timeoutProperty = String.format("fs.%s.Timeout", scheme);
-		if (connectionTimeOut == null) {
-			connectionTimeOut = conf.get(timeoutProperty);
-		}
+
+		String timeoutProperty = String.format("fs.%s.connectionTimeout", scheme);
+		String connectionTimeOut = conf.get(timeoutProperty);
+
 		if (connectionTimeOut == null) {
 			throw new IllegalArgumentException(
 					"Swift Connection Timeout (in ms) " +
