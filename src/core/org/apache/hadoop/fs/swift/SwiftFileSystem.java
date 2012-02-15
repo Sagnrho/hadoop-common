@@ -72,9 +72,6 @@ import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
  */
 public class SwiftFileSystem extends FileSystem {
 
-	private static final long MAX_SWIFT_FILE_SIZE = 5 * 1024 * 1024 * 1024L;
-	private static final String FOLDER_MIME_TYPE = "application/directory";
-
 	private class SwiftFsInputStream extends FSInputStream {
 
 		private InputStream in;
@@ -88,25 +85,13 @@ public class SwiftFileSystem extends FileSystem {
 			this.container = container;
 		}
 
+		public void close() throws IOException {
+			in.close();
+		}
+
 		@Override
 		public long getPos() throws IOException {
 			return pos;
-		}
-
-		@Override
-		public void seek(long pos) throws IOException {
-			try {
-				in.close();
-				in = client.getObjectAsStream(container, objName, pos);
-				this.pos = pos;
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
-		}
-
-		@Override
-		public boolean seekToNewSource(long targetPos) throws IOException {
-			return false;
 		}
 
 		@Override
@@ -128,11 +113,22 @@ public class SwiftFileSystem extends FileSystem {
 			return result;
 		}
 
-		public void close() throws IOException {
-			in.close();
+		@Override
+		public void seek(long pos) throws IOException {
+			try {
+				in.close();
+				in = client.getObjectAsStream(container, objName, pos);
+				this.pos = pos;
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+
+		@Override
+		public boolean seekToNewSource(long targetPos) throws IOException {
+			return false;
 		}
 	}
-
 	private class SwiftFsOutputStream extends OutputStream {
 
 		private PipedOutputStream toPipe;
@@ -159,10 +155,21 @@ public class SwiftFileSystem extends FileSystem {
 		}
 
 		@Override
-		public synchronized void write(int b) throws IOException {
-			toPipe.write(b);
-			pos++;
-			callback.progress(pos);
+		public synchronized void close() {
+			try {
+				toPipe.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+		@Override
+		public synchronized void flush() {
+			try {
+				toPipe.flush();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
 		}
 
 		@Override
@@ -184,40 +191,22 @@ public class SwiftFileSystem extends FileSystem {
 		}
 
 		@Override
-		public synchronized void flush() {
-			try {
-				toPipe.flush();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		}
-
-		@Override
-		public synchronized void close() {
-			try {
-				toPipe.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+		public synchronized void write(int b) throws IOException {
+			toPipe.write(b);
+			pos++;
+			callback.progress(pos);
 		}
 	}
 
-	private ISwiftFilesClient client;
-	private Path workingDir;
-	private URI uri;
+	private static final long MAX_SWIFT_FILE_SIZE = 5 * 1024 * 1024 * 1024L;
 
-	@Override
-	public void initialize(URI uri, Configuration conf) throws IOException {
-		super.initialize(uri, conf);
-		if (client == null) {
-			client = createDefaultClient(uri, conf);
-		}
-		setConf(conf);
-		this.uri = URI.create(uri.getScheme() + "://" + uri.getAuthority());
-		this.workingDir =
-				new Path("/user", System.getProperty("user.name")).makeQualified(this);
+	private static final String FOLDER_MIME_TYPE = "application/directory";
+
+	protected static final SimpleDateFormat rfc822DateParser = new SimpleDateFormat(
+			"EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
+	static {
+		rfc822DateParser.setTimeZone(new SimpleTimeZone(0, "GMT"));
 	}
-
 	private static ISwiftFilesClient createDefaultClient(URI uri, Configuration conf) {
 		
 		FilesClientWrapper client = createSwiftClient(uri, conf);
@@ -240,7 +229,7 @@ public class SwiftFileSystem extends FileSystem {
 				RetryProxy.create(ISwiftFilesClient.class, client,
 						methodNameToPolicyMap);
 	}
-	
+
 	private static FilesClientWrapper createSwiftClient(URI uri, Configuration conf) {
 		String userName = null;
 		String userSecret = null;
@@ -330,6 +319,18 @@ public class SwiftFileSystem extends FileSystem {
 		return new FilesClientWrapper(new FilesClient(userName, userSecret, authUrl, account, Integer.parseInt(connectionTimeOut)));
 	}
 
+	public static Date parseRfc822Date(String dateString) throws ParseException {
+		synchronized (rfc822DateParser) {
+			return rfc822DateParser.parse(dateString);
+		}
+	}
+	
+	private ISwiftFilesClient client;
+
+	private Path workingDir;
+
+	private URI uri;
+
 	@Override
 	public FSDataOutputStream append(Path f, int bufferSize,
 			Progressable progress) throws IOException {
@@ -355,6 +356,16 @@ public class SwiftFileSystem extends FileSystem {
 						statistics);
 	}
 
+	private void createParent(Path path) throws IOException {
+		Path parent = path.getParent();
+		if (parent != null) {
+			SwiftPath absolutePath = makeAbsolute(parent);
+			if (absolutePath.getContainer().length() > 0) {
+				mkdirs(absolutePath);
+			}
+		}
+	}
+
 	@Override
 	@Deprecated
 	public boolean delete(Path path) throws IOException {
@@ -376,7 +387,9 @@ public class SwiftFileSystem extends FileSystem {
 				throw new IOException("delete: " + f + ": Directory is not empty");
 			}
 			for (FileStatus p : contents) {
-				return delete(p.getPath(), recursive);
+				if (!delete(p.getPath(), recursive)) {
+					return false;
+				}
 			}
 		}
 		if (absolutePath.isContainer()) {
@@ -397,15 +410,20 @@ public class SwiftFileSystem extends FileSystem {
 		if (absolutePath.isContainer()) { // container is a "directory"
 			return newDirectory(absolutePath);
 		}
-		
+
 		String objName = absolutePath.getObject();
-		
+
 		try {
 			FilesObjectMetaData meta = client.getObjectMetaData(container, objName);
 			if (meta != null) {
 				if (FOLDER_MIME_TYPE.equals(meta.getMimeType()))
 					return newDirectory(absolutePath);
 				return newFile(meta, absolutePath);
+			} else {
+				List<FilesObject> objList = client.listObjectsStartingWith(container, objName, 1, new Character('/'));
+				if (objList != null && objList.size() > 0) {
+					return newDirectory(absolutePath);
+				}
 			}
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -413,30 +431,6 @@ public class SwiftFileSystem extends FileSystem {
 
 		throw new FileNotFoundException("stat: "+ absolutePath +
 				": No such file or directory");
-	}
-
-	private SwiftPath makeAbsolute(Path path) {
-		if (path.isAbsolute()) {
-			return new SwiftPath(path.toUri());
-		}
-		return new SwiftPath((new Path(workingDir, path)).toUri());
-	}
-
-	private FileStatus newFile(FilesObjectMetaData meta, Path path) {
-		try {
-			Date parsedDate = parseRfc822Date(meta.getLastModified());
-			long parsedLength = Long.parseLong(meta.getContentLength());
-			return new FileStatus(parsedLength, false, 1, MAX_SWIFT_FILE_SIZE,
-					parsedDate.getTime(), path.makeQualified(this));
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
-		return null;
-	}
-
-	private FileStatus newDirectory(Path path) {
-		return new FileStatus(0, true, 1, MAX_SWIFT_FILE_SIZE, 0,
-				path.makeQualified(this));
 	}
 
 	@Override
@@ -447,6 +441,18 @@ public class SwiftFileSystem extends FileSystem {
 	@Override
 	public Path getWorkingDirectory() {
 		return workingDir;
+	}
+
+	@Override
+	public void initialize(URI uri, Configuration conf) throws IOException {
+		super.initialize(uri, conf);
+		if (client == null) {
+			client = createDefaultClient(uri, conf);
+		}
+		setConf(conf);
+		this.uri = URI.create(uri.getScheme() + "://" + uri.getAuthority());
+		this.workingDir =
+				new Path("/user", System.getProperty("user.name")).makeQualified(this);
 	}
 
 	@Override
@@ -467,8 +473,8 @@ public class SwiftFileSystem extends FileSystem {
 		}
 		String objName = absolutePath.getObject();
 		List<FilesObject> objList = client.listObjectsStartingWith(container, objName, -1, new Character('/'));
-		for (FilesObject cont : objList) {
-			statList.add(newDirectory(new Path(cont.getName())));
+		for (FilesObject obj : objList) {
+			statList.add(newDirectory(new Path(container, obj.getName())));
 		}
 		if (stat == null && statList.size() == 0) {
 			throw new FileNotFoundException("list: "+ absolutePath +
@@ -477,26 +483,41 @@ public class SwiftFileSystem extends FileSystem {
 		return statList.toArray(new FileStatus[0]);
 	}
 
+	private SwiftPath makeAbsolute(Path path) {
+		if (path.isAbsolute()) {
+			return new SwiftPath(path.toUri());
+		}
+		return new SwiftPath((new Path(workingDir, path)).toUri());
+	}
+
 	@Override
 	public boolean mkdirs(Path f, FsPermission permission) throws IOException {
 		SwiftPath absolutePath = makeAbsolute(f);
 		if (absolutePath.isContainer()) {
 			return client.createContainer(absolutePath.getContainer());
 		} else {
-			client.createContainer(absolutePath.getContainer()); // ignore exit value, maybe container exists already
+			client.createContainer(absolutePath.getContainer()); // ignore exit value, container may exist
 			return client.createFullPath(absolutePath.getContainer(), absolutePath.getObject());
 		}
 	}
 
-//	private boolean isContainer(Path f) {
-//		Path absolutePath = makeAbsolute(f);
-//		if (absolutePath.toUri().getPath() == null)
-//			return true;
-//		if (absolutePath.toUri().getPath().length() == 0)
-//			return true;
-//		return false;
-//	}
-	
+	private FileStatus newDirectory(Path path) {
+		return new FileStatus(0, true, 1, MAX_SWIFT_FILE_SIZE, 0,
+				path.makeQualified(this));
+	}
+
+	private FileStatus newFile(FilesObjectMetaData meta, Path path) {
+		try {
+			Date parsedDate = parseRfc822Date(meta.getLastModified());
+			long parsedLength = Long.parseLong(meta.getContentLength());
+			return new FileStatus(parsedLength, false, 1, MAX_SWIFT_FILE_SIZE,
+					parsedDate.getTime(), path.makeQualified(this));
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+
 	@Override
 	public FSDataInputStream open(Path f, int bufferSize) throws IOException {
 		FileStatus stat = getFileStatus(f);
@@ -571,32 +592,9 @@ public class SwiftFileSystem extends FileSystem {
 		}
 	}
 
-	private void createParent(Path path) throws IOException {
-		Path parent = path.getParent();
-		if (parent != null) {
-			SwiftPath absolutePath = makeAbsolute(parent);
-			if (absolutePath.getContainer().length() > 0) {
-				mkdirs(absolutePath);
-			}
-		}
-	}
-
 	@Override
 	public void setWorkingDirectory(Path newDir) {
 		this.workingDir = newDir;
-	}
-
-	public static Date parseRfc822Date(String dateString) throws ParseException {
-		synchronized (rfc822DateParser) {
-			return rfc822DateParser.parse(dateString);
-		}
-	}
-
-	protected static final SimpleDateFormat rfc822DateParser = new SimpleDateFormat(
-			"EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
-
-	static {
-		rfc822DateParser.setTimeZone(new SimpleTimeZone(0, "GMT"));
 	}
 }
 
