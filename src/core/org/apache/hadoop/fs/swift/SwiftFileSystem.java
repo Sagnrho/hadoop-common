@@ -131,6 +131,7 @@ public class SwiftFileSystem extends FileSystem {
 		private PipedInputStream fromPipe;
 		private SwiftProgress callback;
 		private long pos = 0;
+		private Thread thread;
 
 		public SwiftFsOutputStream(final ISwiftFilesClient client, final String container,
 				final String objName, int bufferSize, Progressable progress) throws IOException {
@@ -138,7 +139,7 @@ public class SwiftFileSystem extends FileSystem {
 			this.fromPipe = new PipedInputStream(toPipe, bufferSize);
 			this.callback = new SwiftProgress(progress);
 
-			new Thread() {
+			this.thread = new Thread() {
 				public void run(){
 					try {
 						client.storeStreamedObject(container, fromPipe, "binary/octet-stream", objName, new HashMap<String, String>());
@@ -147,8 +148,8 @@ public class SwiftFileSystem extends FileSystem {
 						e.printStackTrace();
 					} 
 				}
-			}.start();
-
+			};
+			thread.start();
 		}
 
 		@Override
@@ -156,7 +157,10 @@ public class SwiftFileSystem extends FileSystem {
 			try {
 				toPipe.flush();
 				toPipe.close();
+				thread.join();
 			} catch (IOException e) {
+				e.printStackTrace();
+			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
 		}
