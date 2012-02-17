@@ -41,15 +41,15 @@ public class IOUtils {
    * OutputStream at the end. The streams are closed in the finally clause.  
    */
   public static void copyBytes(InputStream in, OutputStream out, int buffSize, boolean close) 
-    throws IOException {
-
-    try {
+    throws IOException {    
+	  try{
       copyBytes(in, out, buffSize);
-    } finally {
-      if(close) {
-        out.close();
-        in.close();
-      }
+	  }
+	  finally {      	
+		  if(close) { 
+			  out.close();
+			  in.close();        
+		  }
     }
   }
   

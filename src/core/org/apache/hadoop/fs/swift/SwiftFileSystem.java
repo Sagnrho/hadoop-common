@@ -143,7 +143,6 @@ public class SwiftFileSystem extends FileSystem {
 				public void run(){
 					try {
 						client.storeStreamedObject(container, fromPipe, "binary/octet-stream", objName, new HashMap<String, String>());
-						System.out.println("stored object: /"+container+"/"+objName);
 					} catch (Exception e) {
 						e.printStackTrace();
 					} 
@@ -328,8 +327,7 @@ public class SwiftFileSystem extends FileSystem {
 		if (absolutePath.isContainer()) {
 			throw new IOException("create: "+ absolutePath +": Is a directory");
 		}
-
-		System.out.println("create: " + absolutePath);
+		
 		return new FSDataOutputStream(
 				new SwiftFsOutputStream(client, absolutePath.getContainer(), 
 						absolutePath.getObject(), bufferSize, progress), 
@@ -383,15 +381,24 @@ public class SwiftFileSystem extends FileSystem {
 	}
 
 	@Override
-	public FileStatus getFileStatus(Path f) throws IOException {
+	public FileStatus getFileStatus(Path f) throws IOException {		
 		SwiftPath absolutePath = makeAbsolute(f);
-
+					
 		String container = absolutePath.getContainer();
 		if (container.length() == 0) { // root always exists
 			return newDirectory(absolutePath);
 		}
 
+		
+		
 		if (absolutePath.isContainer()) { // container is a "directory"
+			
+		
+			if(client.getContainerInfo(container) == null)
+			{
+				throw new FileNotFoundException("stat: "+ absolutePath +
+						": No such file or directory");
+			}
 			return newDirectory(absolutePath);
 		}
 
@@ -413,6 +420,7 @@ public class SwiftFileSystem extends FileSystem {
 			e.printStackTrace();
 		}
 
+		
 		throw new FileNotFoundException("stat: "+ absolutePath +
 				": No such file or directory");
 	}
@@ -460,8 +468,7 @@ public class SwiftFileSystem extends FileSystem {
 		List<FilesObject> objList = client.listObjectsStartingWith(container, 
 				(objName == null) ? null : objName + "/", -1, new Character('/'));
 		for (FilesObject obj : objList) {
-			String name = obj.getName();
-			System.out.println("list: /" + container + "/" + name);
+			String name = obj.getName();			
 			if (name.lastIndexOf('/') == name.length() - 1)
 				name = name.substring(0, name.length() - 1);
 			statList.add(getFileStatus(new Path("/" + container, name)));

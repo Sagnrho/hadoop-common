@@ -5,7 +5,9 @@ import java.io.PipedInputStream;
 import java.util.HashMap;
 import java.util.List;
 
+
 import com.rackspacecloud.client.cloudfiles.FilesContainer;
+import com.rackspacecloud.client.cloudfiles.FilesContainerInfo;
 import com.rackspacecloud.client.cloudfiles.FilesObject;
 import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
 
@@ -36,5 +38,7 @@ public interface ISwiftFilesClient {
 	List<FilesObject> listObjects(String name);
 
 	void copyObject(String name, String name2, String container, String string);
+	
+	public FilesContainerInfo getContainerInfo (String container);
 
 }

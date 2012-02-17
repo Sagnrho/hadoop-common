@@ -39,7 +39,10 @@ public class SwiftProgress implements IFilesTransferCallback {
 	
 	@Override
 	public void progress(long arg0) {
-		hadoopCallback.progress();
+		if(hadoopCallback != null)
+		{
+			hadoopCallback.progress();
+		}
 	}
 
 }

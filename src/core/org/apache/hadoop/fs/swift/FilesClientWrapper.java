@@ -8,6 +8,7 @@ import java.util.List;
 import com.rackspacecloud.client.cloudfiles.FilesClient;
 import com.rackspacecloud.client.cloudfiles.FilesContainer;
 import com.rackspacecloud.client.cloudfiles.FilesContainerExistsException;
+import com.rackspacecloud.client.cloudfiles.FilesContainerInfo;
 import com.rackspacecloud.client.cloudfiles.FilesNotFoundException;
 import com.rackspacecloud.client.cloudfiles.FilesObject;
 import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
@@ -105,7 +106,7 @@ public class FilesClientWrapper implements ISwiftFilesClient {
 	}
 
 	@Override
-	public boolean createContainer(String container) {
+	public boolean createContainer(String container) {		
 		try {
 			client.createContainer(container);
 			return true;
@@ -156,5 +157,21 @@ public class FilesClientWrapper implements ISwiftFilesClient {
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+	
+	public FilesContainerInfo getContainerInfo (String container)
+	{		
+		try {
+			return client.getContainerInfo(container);
+					
+		}catch(FilesNotFoundException e)
+		{
+			return null;
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+			throw new RuntimeException("getContainerInfo failed", e);
+		}
+		
 	}
 }
