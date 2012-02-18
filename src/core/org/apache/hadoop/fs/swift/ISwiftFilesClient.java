@@ -4,10 +4,12 @@ import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.rackspacecloud.client.cloudfiles.FilesContainer;
 import com.rackspacecloud.client.cloudfiles.FilesObject;
 import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
+import com.rackspacecloud.client.cloudfiles.IFilesTransferCallback;
 
 public interface ISwiftFilesClient {
 
@@ -36,5 +38,7 @@ public interface ISwiftFilesClient {
 	List<FilesObject> listObjects(String name);
 
 	void copyObject(String name, String name2, String container, String string);
+	
+	public boolean createManifestObject(String container, String contentType, String name, String manifest, Map<String,String> metadata);
 
 }

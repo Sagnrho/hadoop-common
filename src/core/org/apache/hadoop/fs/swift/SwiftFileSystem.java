@@ -132,18 +132,29 @@ public class SwiftFileSystem extends FileSystem {
 		private SwiftProgress callback;
 		private long pos = 0;
 		private Thread thread;
+		private long segment;
+		private String container;
+		private String objName;
+		private int bufferSize;
 
 		public SwiftFsOutputStream(final ISwiftFilesClient client, final String container,
 				final String objName, int bufferSize, Progressable progress) throws IOException {
+			this.callback = new SwiftProgress(progress);
+			this.segment = 0;
+			this.container = container;
+			this.objName = objName;
+			this.bufferSize = bufferSize;
+
+			startOutputThread();
+		}
+
+		private void startOutputThread() throws IOException {
 			this.toPipe = new PipedOutputStream();
 			this.fromPipe = new PipedInputStream(toPipe, bufferSize);
-			this.callback = new SwiftProgress(progress);
-
 			this.thread = new Thread() {
 				public void run(){
 					try {
-						client.storeStreamedObject(container, fromPipe, "binary/octet-stream", objName, new HashMap<String, String>());
-						System.out.println("stored object: /"+container+"/"+objName);
+						client.storeStreamedObject(container, fromPipe, "binary/octet-stream", objName + getLargeObjectSuffix(segment), new HashMap<String, String>());
 					} catch (Exception e) {
 						e.printStackTrace();
 					} 
@@ -151,13 +162,30 @@ public class SwiftFileSystem extends FileSystem {
 			};
 			thread.start();
 		}
-
+		
+		private boolean switchObjectStream(int offset) throws IOException {
+			try {
+				if (pos + offset > MAX_SWIFT_FILE_SIZE) {
+					toPipe.flush();
+					toPipe.close();
+					thread.join();
+					segment++;
+					pos = 0;
+					return true;
+				}
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			return false;
+		}
+		
 		@Override
 		public synchronized void close() {
 			try {
 				toPipe.flush();
 				toPipe.close();
 				thread.join();
+				client.createManifestObject(container, "binary/octet-stream", objName, container + "/" + objName, new HashMap<String, String>());
 			} catch (IOException e) {
 				e.printStackTrace();
 			} catch (InterruptedException e) {
@@ -176,6 +204,8 @@ public class SwiftFileSystem extends FileSystem {
 
 		@Override
 		public synchronized void write(byte[] b) throws IOException {
+			if(switchObjectStream(b.length))
+				startOutputThread();
 			toPipe.write(b);
 			pos += b.length;
 			callback.progress(pos);
@@ -184,6 +214,8 @@ public class SwiftFileSystem extends FileSystem {
 		@Override
 		public synchronized void write(byte[] b, int off, int len) {
 			try {
+				if(switchObjectStream(len))
+					startOutputThread();
 				toPipe.write(b, off, len);
 				pos += len;
 				callback.progress(pos);
@@ -194,6 +226,8 @@ public class SwiftFileSystem extends FileSystem {
 
 		@Override
 		public synchronized void write(int b) throws IOException {
+			if(switchObjectStream(1))
+				startOutputThread();
 			toPipe.write(b);
 			pos++;
 			callback.progress(pos);
@@ -201,6 +235,11 @@ public class SwiftFileSystem extends FileSystem {
 	}
 
 	private static final long MAX_SWIFT_FILE_SIZE = 5 * 1024 * 1024 * 1024L;
+	
+	private static final int LARGE_OBJECT_SUFFIX_COUNT = 8;
+	private static final String LARGE_OBJECT_SUFFIX_FORMAT = "/%03d";
+	
+	private static long[] LARGE_OBJECT_SUFFIX_BUCKET;
 
 	private static final String FOLDER_MIME_TYPE = "application/directory";
 
@@ -208,7 +247,39 @@ public class SwiftFileSystem extends FileSystem {
 			"EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
 	static {
 		rfc822DateParser.setTimeZone(new SimpleTimeZone(0, "GMT"));
+		LARGE_OBJECT_SUFFIX_BUCKET = new long[LARGE_OBJECT_SUFFIX_COUNT];
+		LARGE_OBJECT_SUFFIX_BUCKET[0] = 1L << LARGE_OBJECT_SUFFIX_COUNT;
+		for(int i = 1; i < LARGE_OBJECT_SUFFIX_COUNT; ++i) {
+			LARGE_OBJECT_SUFFIX_BUCKET[i] = LARGE_OBJECT_SUFFIX_BUCKET[i-1] 
+					+ (1L << (LARGE_OBJECT_SUFFIX_COUNT - i)) * (1L << ((LARGE_OBJECT_SUFFIX_COUNT + 1) * i));
+		}
 	}
+	
+	private String getLargeObjectSuffix(long index) {
+		for (int i = 0; i < LARGE_OBJECT_SUFFIX_COUNT; ++i) {
+			if (index < LARGE_OBJECT_SUFFIX_BUCKET[i]) {
+				StringBuilder sb = new StringBuilder();
+				for (int j = 1; j <= (i+1); ++j) {
+					sb.insert(0, String.format(LARGE_OBJECT_SUFFIX_FORMAT, index % (1L << (LARGE_OBJECT_SUFFIX_COUNT + 1))));
+					index /= (1L << (LARGE_OBJECT_SUFFIX_COUNT + 1));
+				}
+				return sb.toString();
+			}
+		}
+		return null;
+	}
+	
+	private long getLargeObjectIndex(String suffix) {
+		String[] suffixes = suffix.split("/");
+		long result = 0L;
+		int j = 0;
+		for (int i = suffixes.length - 1; i >= 0; --i) {
+			result += Integer.parseInt(suffixes[i]) * (1L << ((LARGE_OBJECT_SUFFIX_COUNT + 1) * j));
+			j++;
+		}
+		return result;
+	}
+	
 	private static ISwiftFilesClient createDefaultClient(URI uri, Configuration conf) {
 		
 		FilesClientWrapper client = createSwiftClient(uri, conf);
@@ -552,7 +623,7 @@ public class SwiftFileSystem extends FileSystem {
 				if (srcAbsolute.getContainer().length() == 0) {
 					List<FilesContainer> fullList = client.listContainers();
 					for (FilesContainer container : fullList) {
-						List<FilesObject> list = client.listObjects(container.getName());
+						List<FilesObject> list = client.listObjectsStartingWith(container.getName(), null, -1, null);
 						for (FilesObject fobj : list) {
 							client.copyObject(container.getName(), fobj.getName(), 
 									dstAbsolute.getContainer(), dstAbsolute.getObject() + fobj.getName());

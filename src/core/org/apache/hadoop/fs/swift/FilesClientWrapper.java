@@ -2,8 +2,10 @@ package org.apache.hadoop.fs.swift;
 
 import java.io.InputStream;
 import java.io.PipedInputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.rackspacecloud.client.cloudfiles.FilesClient;
 import com.rackspacecloud.client.cloudfiles.FilesContainer;
@@ -14,6 +16,8 @@ import com.rackspacecloud.client.cloudfiles.FilesObjectMetaData;
 
 public class FilesClientWrapper implements ISwiftFilesClient {
 
+	private static final int MAX_OBJECT_LIST_LENGTH = 10000;
+	private static final int MAX_CONTAINER_LIST_LENGTH = 0;
 	private FilesClient client;
 
 	public FilesClientWrapper(FilesClient client) {
@@ -84,7 +88,14 @@ public class FilesClientWrapper implements ISwiftFilesClient {
 	@Override
 	public List<FilesContainer> listContainers() {
 		try {
-			return client.listContainers();
+			List<FilesContainer> chunk = client.listContainers(MAX_CONTAINER_LIST_LENGTH, null);
+			List<FilesContainer> result = new ArrayList<FilesContainer>();
+			while (chunk.size() == MAX_CONTAINER_LIST_LENGTH) {
+				result.addAll(chunk);
+				chunk = client.listContainers(MAX_CONTAINER_LIST_LENGTH, result.get(MAX_CONTAINER_LIST_LENGTH - 1).getName());
+			}
+			result.addAll(chunk);
+			return result;
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -95,7 +106,17 @@ public class FilesClientWrapper implements ISwiftFilesClient {
 	public List<FilesObject> listObjectsStartingWith(String container,
 			String objName, int i, Character character) {
 		try {
-			return client.listObjectsStartingWith(container, objName, null, i, null, character);
+			if (i > 0) 
+				return client.listObjectsStartingWith(container, objName, null, i, null, character);
+			List<FilesObject> result = new ArrayList<FilesObject>();
+			List<FilesObject> chunk = client.listObjectsStartingWith(container, objName, null, MAX_OBJECT_LIST_LENGTH, null, character);
+			while (chunk.size() == MAX_OBJECT_LIST_LENGTH) {
+				result.addAll(chunk);
+				chunk = client.listObjectsStartingWith(container, objName, null,
+						 MAX_OBJECT_LIST_LENGTH, result.get(MAX_OBJECT_LIST_LENGTH - 1).getName(), character);
+			}
+			result.addAll(chunk);
+			return result;
 		} catch (FilesNotFoundException fe) {
 			return null;
 		} catch (Exception e) {
@@ -141,7 +162,7 @@ public class FilesClientWrapper implements ISwiftFilesClient {
 	@Override
 	public List<FilesObject> listObjects(String name) {
 		try {
-			return client.listObjects(name);
+			return listObjectsStartingWith(name, null, -1, null);
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -156,5 +177,16 @@ public class FilesClientWrapper implements ISwiftFilesClient {
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+
+	@Override
+	public boolean createManifestObject(String container, String contentType,
+			String name, String manifest, Map<String, String> metadata) {
+		try {
+			client.createManifestObject(container, contentType, name, manifest, metadata, null);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return false;
 	}
 }
